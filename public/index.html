@@ -1,0 +1,193 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZIEY GHOST CALL</title>
+<style>
+*{box-sizing:border-box}
+body{
+ margin:0;padding:20px;background:#050a08;
+ color:#00ff88;font-family:Arial,sans-serif
+}
+main{max-width:500px;margin:auto}
+header{text-align:center;padding:25px}
+h1{letter-spacing:4px;text-shadow:0 0 15px #00ff88}
+.card{
+ background:#101a16;border:1px solid #087c48;
+ border-radius:14px;padding:18px;margin:15px 0
+}
+input{
+ width:100%;padding:13px;margin:8px 0;
+ background:#050a08;color:white;
+ border:1px solid #00aa60;border-radius:8px
+}
+button{
+ width:100%;padding:14px;margin:5px 0;
+ border:0;border-radius:8px;
+ background:#00cc70;color:#001b0e;font-weight:bold
+}
+.secondary{background:#183c2d;color:#00ff88}
+.danger{background:#8b2020;color:white}
+video{
+ width:100%;background:#000;border-radius:10px;
+ margin:5px 0;min-height:120px
+}
+small{color:#a0c5ae}
+</style>
+</head>
+<body>
+<main>
+<header>
+<h1>ZIEY GHOST</h1>
+<p>PRIVATE COMMUNICATION SYSTEM</p>
+<small id="status">CONNECTING...</small>
+</header>
+
+<section class="card">
+<h3>OPERATOR PROFILE</h3>
+<p>IDENTITY: ZIEY GHOST</p>
+<p>STATUS: ONLINE</p>
+</section>
+
+<section class="card">
+<h3>PRIVATE ROOM</h3>
+<input id="room" placeholder="Kode ruang bersama">
+<button id="join">JOIN ROOM</button>
+<button id="call" class="secondary">START VIDEO CALL</button>
+<button id="hangup" class="danger">END CALL</button>
+<p id="message">Belum bergabung.</p>
+</section>
+
+<section class="card">
+<h3>VIDEO CONNECTION</h3>
+<p>YOUR CAMERA</p>
+<video id="local" autoplay muted playsinline></video>
+<p>REMOTE CAMERA</p>
+<video id="remote" autoplay playsinline></video>
+</section>
+
+<section class="card">
+<h3>PHONE CALL</h3>
+<input id="phone" type="tel" placeholder="Nomor telepon">
+<button id="dial" class="secondary">OPEN PHONE DIALER</button>
+<small>Panggilan nomor HP menggunakan SIM Android.</small>
+</section>
+
+</main>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket=io();
+const $=id=>document.getElementById(id);
+let pc=null,stream=null,joined=false;
+let candidates=[];
+
+function msg(t){
+ $("status").textContent=t;
+ $("message").textContent=t;
+}
+
+async function setup(){
+ if(pc)return pc;
+
+ stream=await navigator.mediaDevices.getUserMedia({
+  audio:true,video:true
+ });
+
+ $("local").srcObject=stream;
+ pc=new RTCPeerConnection({
+  iceServers:[{urls:"stun:stun.l.google.com:19302"}]
+ });
+
+ stream.getTracks().forEach(t=>pc.addTrack(t,stream));
+
+ pc.ontrack=e=>$("remote").srcObject=e.streams[0];
+
+ pc.onicecandidate=e=>{
+  if(e.candidate)socket.emit("signal",{
+   type:"candidate",candidate:e.candidate
+  });
+ };
+
+ return pc;
+}
+
+async function flush(){
+ for(const c of candidates){
+  try{await pc.addIceCandidate(c)}catch(e){console.log(e)}
+ }
+ candidates=[];
+}
+
+$("join").onclick=()=>{
+ const room=$("room").value.trim();
+ if(!/^[A-Za-z0-9-]{4,30}$/.test(room)){
+  alert("Kode ruang harus 4-30 karakter.");
+  return;
+ }
+ socket.emit("join-room",room);
+ joined=true;
+ msg("ROOM JOINED: "+room);
+};
+
+$("call").onclick=async()=>{
+ try{
+  if(!joined)return alert("JOIN ROOM dahulu.");
+  const p=await setup();
+  const offer=await p.createOffer();
+  await p.setLocalDescription(offer);
+  socket.emit("signal",{type:"offer",sdp:p.localDescription});
+  msg("CALLING...");
+ }catch(e){msg("ERROR: "+e.message)}
+};
+
+socket.on("signal",async d=>{
+ try{
+  if(d.type==="offer"){
+   const p=await setup();
+   await p.setRemoteDescription(d.sdp);
+   await flush();
+   const answer=await p.createAnswer();
+   await p.setLocalDescription(answer);
+   socket.emit("signal",{type:"answer",sdp:p.localDescription});
+   msg("CALL CONNECTED");
+  }
+  if(d.type==="answer"&&pc){
+   await pc.setRemoteDescription(d.sdp);
+   await flush();
+   msg("CALL CONNECTED");
+  }
+  if(d.type==="candidate"&&pc){
+   if(pc.remoteDescription)await pc.addIceCandidate(d.candidate);
+   else candidates.push(d.candidate);
+  }
+ }catch(e){msg("SIGNAL ERROR: "+e.message)}
+});
+
+$("hangup").onclick=()=>{
+ if(pc)pc.close();
+ pc=null;
+ if(stream)stream.getTracks().forEach(t=>t.stop());
+ stream=null;
+ candidates=[];
+ $("local").srcObject=null;
+ $("remote").srcObject=null;
+ msg("CALL ENDED");
+};
+
+$("dial").onclick=()=>{
+ const n=$("phone").value.trim();
+ if(!/^\+?[0-9]{6,16}$/.test(n)){
+  alert("Nomor telepon tidak valid.");
+  return;
+ }
+ location.href="tel:"+n;
+};
+
+socket.on("connect",()=>msg("SERVER CONNECTED"));
+socket.on("disconnect",()=>msg("SERVER DISCONNECTED"));
+</script>
+</body>
+</html>
